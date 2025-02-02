@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createAuthClient as createSolidClient } from "./solid";
 import { createAuthClient as createReactClient } from "./react";
@@ -7,7 +9,7 @@ import { testClientPlugin, testClientPlugin2 } from "./test-plugin";
 import type { Accessor } from "solid-js";
 import type { Ref } from "vue";
 import type { ReadableAtom } from "nanostores";
-import type { Session } from "../db/schema";
+import type { Session } from "../types";
 import { BetterFetchError } from "@better-fetch/fetch";
 import { twoFactorClient } from "../plugins";
 import { organizationClient, passkeyClient } from "./plugins";
@@ -181,7 +183,9 @@ describe("type", () => {
 				},
 			},
 		});
-		expectTypeOf(client.useComputedAtom).toEqualTypeOf<Readonly<Ref<number>>>();
+		expectTypeOf(client.useComputedAtom).toEqualTypeOf<
+			() => Readonly<Ref<number>>
+		>();
 	});
 	it("should infer resolved hooks svelte", () => {
 		const client = createSvelteClient({

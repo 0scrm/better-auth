@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import { defineConfig } from "tsup";
 
 export default defineConfig((env) => {
@@ -15,6 +14,7 @@ export default defineConfig((env) => {
 			"adapters/mongodb": "./src/adapters/mongodb-adapter/index.ts",
 			"adapters/kysely": "./src/adapters/kysely-adapter/index.ts",
 			"adapters/memory": "./src/adapters/memory-adapter/index.ts",
+			"adapters/test": "./src/adapters/test.ts",
 			db: "./src/db/index.ts",
 			oauth2: "./src/oauth2/index.ts",
 			react: "./src/client/react/index.ts",
@@ -41,15 +41,17 @@ export default defineConfig((env) => {
 			"plugins/one-tap": "./src/plugins/one-tap/index.ts",
 			"plugins/open-api": "./src/plugins/open-api/index.ts",
 			"plugins/organization": "./src/plugins/organization/index.ts",
+			"plugins/oidc-provider": "./src/plugins/oidc-provider/index.ts",
 			"plugins/passkey": "./src/plugins/passkey/index.ts",
 			"plugins/phone-number": "./src/plugins/phone-number/index.ts",
+			"plugins/sso": "./src/plugins/sso/index.ts",
 			"plugins/two-factor": "./src/plugins/two-factor/index.ts",
 			"plugins/username": "./src/plugins/username/index.ts",
 		},
 		format: ["esm", "cjs"],
-		bundle: true,
-		splitting: false,
+		splitting: true,
 		cjsInterop: true,
 		skipNodeModulesBundle: true,
+		treeshake: true,
 	};
 });

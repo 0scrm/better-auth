@@ -28,6 +28,12 @@ export interface MicrosoftOptions
 	 * Disable profile photo
 	 */
 	disableProfilePhoto?: boolean;
+
+	/**
+	 * Require user to select their account even if only one account is logged in
+	 * @default false
+	 */
+	requireSelectAccount?: boolean;
 }
 
 export const microsoft = (options: MicrosoftOptions) => {
@@ -49,13 +55,14 @@ export const microsoft = (options: MicrosoftOptions) => {
 				codeVerifier: data.codeVerifier,
 				scopes,
 				redirectURI: data.redirectURI,
+				prompt: options.requireSelectAccount || false,
 			});
 		},
 		validateAuthorizationCode({ code, codeVerifier, redirectURI }) {
 			return validateAuthorizationCode({
 				code,
 				codeVerifier,
-				redirectURI: options.redirectURI || redirectURI,
+				redirectURI,
 				options,
 				tokenEndpoint,
 			});
@@ -67,7 +74,7 @@ export const microsoft = (options: MicrosoftOptions) => {
 			if (!token.idToken) {
 				return null;
 			}
-			const user = decodeJwt(token.idToken)?.payload as MicrosoftEntraIDProfile;
+			const user = decodeJwt(token.idToken) as MicrosoftEntraIDProfile;
 			const profilePhotoSize = options.profilePhotoSize || 48;
 			await betterFetch<ArrayBuffer>(
 				`https://graph.microsoft.com/v1.0/me/photos/${profilePhotoSize}x${profilePhotoSize}/$value`,

@@ -44,15 +44,25 @@ export const useAuthQuery = <T>(
 		return $fetch<T>(path, {
 			...opts,
 			async onSuccess(context) {
-				value.set({
-					data: context.data,
-					error: null,
-					isPending: false,
-					isRefetching: false,
-				});
+				//to avoid hydration error
+				if (typeof window !== "undefined") {
+					value.set({
+						data: context.data,
+						error: null,
+						isPending: false,
+						isRefetching: false,
+					});
+				}
 				await opts?.onSuccess?.(context);
 			},
 			async onError(context) {
+				const { request } = context;
+				const retryAttempts =
+					typeof request.retry === "number"
+						? request.retry
+						: request.retry?.attempts;
+				const retryAttempt = request.retryAttempt || 0;
+				if (retryAttempts && retryAttempt < retryAttempts) return;
 				value.set({
 					error: context.error,
 					data: null,
@@ -73,7 +83,6 @@ export const useAuthQuery = <T>(
 			},
 		});
 	};
-
 	initializedAtom = Array.isArray(initializedAtom)
 		? initializedAtom
 		: [initializedAtom];

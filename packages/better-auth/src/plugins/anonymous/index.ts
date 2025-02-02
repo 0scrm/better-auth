@@ -7,7 +7,7 @@ import {
 import type {
 	BetterAuthPlugin,
 	InferOptionSchema,
-	PluginSchema,
+	AuthPluginSchema,
 	Session,
 	User,
 } from "../../types";
@@ -58,7 +58,7 @@ const schema = {
 			},
 		},
 	},
-} satisfies PluginSchema;
+} satisfies AuthPluginSchema;
 
 export const anonymous = (options?: AnonymousOptions) => {
 	const ERROR_CODES = {
@@ -140,12 +140,15 @@ export const anonymous = (options?: AnonymousOptions) => {
 						user: newUser,
 					});
 					return ctx.json({
-						id: newUser.id,
-						email: newUser.email,
-						emailVerified: newUser.emailVerified,
-						name: newUser.name,
-						createdAt: newUser.createdAt,
-						updatedAt: newUser.updatedAt,
+						token: session.token,
+						user: {
+							id: newUser.id,
+							email: newUser.email,
+							emailVerified: newUser.emailVerified,
+							name: newUser.name,
+							createdAt: newUser.createdAt,
+							updatedAt: newUser.updatedAt,
+						},
 					});
 				},
 			),
@@ -158,7 +161,14 @@ export const anonymous = (options?: AnonymousOptions) => {
 						const hasSessionToken = setCookie?.includes(
 							context.context.authCookies.sessionToken.name,
 						);
-						return !!hasSessionToken;
+						return (
+							!!hasSessionToken &&
+							(context.path.startsWith("/sign-in") ||
+								context.path.startsWith("/callback") ||
+								context.path.startsWith("/oauth2/callback") ||
+								context.path.startsWith("/magic-link/verify") ||
+								context.path.startsWith("/email-otp/verify-email"))
+						);
 					},
 					handler: createAuthMiddleware(async (ctx) => {
 						const headers = ctx.responseHeader;

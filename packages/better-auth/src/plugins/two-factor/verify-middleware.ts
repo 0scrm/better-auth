@@ -6,7 +6,6 @@ import { z } from "zod";
 import { getSessionFromCtx } from "../../api";
 import type { UserWithTwoFactor } from "./types";
 import { createHMAC } from "@better-auth/utils/hmac";
-import { base64 } from "@better-auth/utils/base64";
 
 export const verifyTwoFactorMiddleware = createAuthMiddleware(
 	{
@@ -79,8 +78,16 @@ export const verifyTwoFactorMiddleware = createAuthMiddleware(
 						);
 					}
 					return ctx.json({
-						session,
-						user,
+						token: session.token,
+						user: {
+							id: user.id,
+							email: user.email,
+							emailVerified: user.emailVerified,
+							name: user.name,
+							image: user.image,
+							createdAt: user.createdAt,
+							updatedAt: user.updatedAt,
+						},
 					});
 				},
 				invalid: async () => {
@@ -97,8 +104,16 @@ export const verifyTwoFactorMiddleware = createAuthMiddleware(
 		return {
 			valid: async () => {
 				return ctx.json({
-					session,
-					user: session.user,
+					token: session.session.token,
+					user: {
+						id: session.user.id,
+						email: session.user.email,
+						emailVerified: session.user.emailVerified,
+						name: session.user.name,
+						image: session.user.image,
+						createdAt: session.user.createdAt,
+						updatedAt: session.user.updatedAt,
+					},
 				});
 			},
 			invalid: async () => {

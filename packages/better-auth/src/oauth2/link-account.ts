@@ -1,5 +1,5 @@
 import { APIError, createEmailVerificationToken } from "../api";
-import type { Account } from "../db/schema";
+import type { Account } from "../types";
 import type { GenericEndpointContext, User } from "../types";
 import { logger } from "../utils";
 import { isDevelopment } from "../utils/env";
@@ -17,9 +17,11 @@ export async function handleOAuthUserInfo(
 	},
 ) {
 	const dbUser = await c.context.internalAdapter
-		.findUserByEmail(userInfo.email.toLowerCase(), {
-			includeAccounts: true,
-		})
+		.findOAuthUser(
+			userInfo.email.toLowerCase(),
+			account.accountId,
+			account.providerId,
+		)
 		.catch((e) => {
 			logger.error(
 				"Better auth was unable to query your database.\nError: ",
@@ -83,6 +85,7 @@ export async function handleOAuthUserInfo(
 					refreshToken: account.refreshToken,
 					accessTokenExpiresAt: account.accessTokenExpiresAt,
 					refreshTokenExpiresAt: account.refreshTokenExpiresAt,
+					scope: account.scope,
 				}).filter(([_, value]) => value !== undefined),
 			);
 
@@ -122,6 +125,8 @@ export async function handleOAuthUserInfo(
 				const token = await createEmailVerificationToken(
 					c.context.secret,
 					user.email,
+					undefined,
+					c.context.options.emailVerification?.expiresIn,
 				);
 				const url = `${c.context.baseURL}/verify-email?token=${token}&callbackURL=${callbackURL}`;
 				await c.context.options.emailVerification?.sendVerificationEmail?.(

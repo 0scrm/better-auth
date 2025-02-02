@@ -13,8 +13,9 @@ import { getBaseURL } from "../utils/url";
 import { Kysely, MysqlDialect, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import { MongoClient } from "mongodb";
-import { mongodbAdapter } from "../adapters";
+import { mongodbAdapter } from "../adapters/mongodb-adapter";
 import { createPool } from "mysql2/promise";
+import { bearer } from "../../src/plugins";
 
 export async function getTestInstance<
 	O extends Partial<BetterAuthOptions>,
@@ -101,6 +102,7 @@ export async function getTestInstance<
 			disableCSRFCheck: true,
 			...options?.advanced,
 		},
+		plugins: [bearer(), ...(options?.plugins || [])],
 	} as O extends undefined ? typeof opts : O & typeof opts);
 
 	const testUser = {

@@ -63,7 +63,7 @@ interface GenericOAuthConfig {
 	 * Prompt parameter for the authorization request.
 	 * Controls the authentication experience for the user.
 	 */
-	prompt?: string;
+	prompt?: "none" | "login" | "consent" | "select_account";
 	/**
 	 * Whether to use PKCE (Proof Key for Code Exchange)
 	 * @default false
@@ -101,6 +101,11 @@ interface GenericOAuthConfig {
 				emailVerified?: boolean;
 				[key: string]: any;
 		  }>;
+	/**
+	 * Additional search-params to add to the authorizationUrl.
+	 * Warning: Search-params added here overwrite any default params.
+	 */
+	authorizationUrlParams?: Record<string, string>;
 }
 
 interface GenericOAuthOptions {
@@ -116,21 +121,19 @@ async function getUserInfo(
 ) {
 	if (tokens.idToken) {
 		const decoded = decodeJwt(tokens.idToken) as {
-			payload: {
-				sub: string;
-				email_verified: boolean;
-				email: string;
-				name: string;
-				picture: string;
-			};
+			sub: string;
+			email_verified: boolean;
+			email: string;
+			name: string;
+			picture: string;
 		};
-		if (decoded?.payload) {
-			if (decoded.payload.sub && decoded.payload.email) {
+		if (decoded) {
+			if (decoded.sub && decoded.email) {
 				return {
-					id: decoded.payload.sub,
-					emailVerified: decoded.payload.email_verified,
-					image: decoded.payload.picture,
-					...decoded.payload,
+					id: decoded.sub,
+					emailVerified: decoded.email_verified,
+					image: decoded.picture,
+					...decoded,
 				};
 			}
 		}
@@ -172,84 +175,84 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 	return {
 		id: "generic-oauth",
 		init: (ctx) => {
+			const genericProviders = options.config.map((c) => {
+				let finalUserInfoUrl = c.userInfoUrl;
+				return {
+					id: c.providerId,
+					name: c.providerId,
+					createAuthorizationURL(data) {
+						return createAuthorizationURL({
+							id: c.providerId,
+							options: {
+								clientId: c.clientId,
+								clientSecret: c.clientSecret,
+								redirectURI: c.redirectURI,
+							},
+							authorizationEndpoint: c.authorizationUrl!,
+							state: data.state,
+							codeVerifier: c.pkce ? data.codeVerifier : undefined,
+							scopes: c.scopes || [],
+							redirectURI: `${ctx.baseURL}/oauth2/callback/${c.providerId}`,
+						});
+					},
+					async validateAuthorizationCode(data) {
+						let finalTokenUrl = c.tokenUrl;
+						if (c.discoveryUrl) {
+							const discovery = await betterFetch<{
+								token_endpoint: string;
+								userinfo_endpoint: string;
+							}>(c.discoveryUrl, {
+								method: "GET",
+							});
+							if (discovery.data) {
+								finalTokenUrl = discovery.data.token_endpoint;
+								finalUserInfoUrl = discovery.data.userinfo_endpoint;
+							}
+						}
+						if (!finalTokenUrl) {
+							throw new APIError("BAD_REQUEST", {
+								message: "Invalid OAuth configuration. Token URL not found.",
+							});
+						}
+						return validateAuthorizationCode({
+							code: data.code,
+							codeVerifier: data.codeVerifier,
+							redirectURI: data.redirectURI,
+							options: {
+								clientId: c.clientId,
+								clientSecret: c.clientSecret,
+								redirectURI: c.redirectURI,
+							},
+							tokenEndpoint: finalTokenUrl,
+						});
+					},
+					async getUserInfo(tokens) {
+						if (!finalUserInfoUrl) {
+							return null;
+						}
+						const userInfo = c.getUserInfo
+							? await c.getUserInfo(tokens)
+							: await getUserInfo(tokens, finalUserInfoUrl);
+						if (!userInfo) {
+							return null;
+						}
+						return {
+							user: {
+								id: userInfo?.id,
+								email: userInfo?.email,
+								emailVerified: userInfo?.emailVerified,
+								image: userInfo?.image,
+								name: userInfo?.name,
+								...c.mapProfileToUser?.(userInfo),
+							},
+							data: userInfo,
+						};
+					},
+				} as OAuthProvider;
+			});
 			return {
 				context: {
-					socialProviders: options.config.map((c) => {
-						let finalTokenUrl = c.tokenUrl;
-						let finalUserInfoUrl = c.userInfoUrl;
-						return {
-							id: c.providerId,
-							name: c.providerId,
-							createAuthorizationURL(data) {
-								return createAuthorizationURL({
-									id: c.providerId,
-									options: {
-										clientId: c.clientId,
-										clientSecret: c.clientSecret,
-										redirectURI: c.redirectURI,
-									},
-									authorizationEndpoint: c.authorizationUrl!,
-									state: data.state,
-									codeVerifier: c.pkce ? data.codeVerifier : undefined,
-									scopes: c.scopes || [],
-									redirectURI: `${ctx.baseURL}/oauth2/callback/${c.providerId}`,
-								});
-							},
-							async validateAuthorizationCode(data) {
-								let finalTokenUrl = c.tokenUrl;
-								if (c.discoveryUrl) {
-									const discovery = await betterFetch<{
-										token_endpoint: string;
-										userinfo_endpoint: string;
-									}>(c.discoveryUrl, {
-										method: "GET",
-									});
-									if (discovery.data) {
-										finalTokenUrl = discovery.data.token_endpoint;
-										finalUserInfoUrl = discovery.data.userinfo_endpoint;
-									}
-								}
-								if (!finalTokenUrl) {
-									throw new APIError("BAD_REQUEST", {
-										message:
-											"Invalid OAuth configuration. Token URL not found.",
-									});
-								}
-								return validateAuthorizationCode({
-									code: data.code,
-									codeVerifier: data.codeVerifier,
-									redirectURI: data.redirectURI,
-									options: {
-										clientId: c.clientId,
-										clientSecret: c.clientSecret,
-									},
-									tokenEndpoint: finalTokenUrl,
-								});
-							},
-							async getUserInfo(tokens) {
-								if (!finalUserInfoUrl) {
-									return null;
-								}
-								const userInfo = c.getUserInfo
-									? await c.getUserInfo(tokens)
-									: await getUserInfo(tokens, finalUserInfoUrl);
-								if (!userInfo) {
-									return null;
-								}
-								return {
-									user: {
-										id: userInfo?.id,
-										email: userInfo?.email,
-										emailVerified: userInfo?.emailVerified,
-										image: userInfo?.image,
-										name: userInfo?.name,
-										...c.mapProfileToUser?.(userInfo),
-									},
-									data: userInfo,
-								};
-							},
-						} as OAuthProvider;
-					}),
+					socialProviders: genericProviders.concat(ctx.socialProviders),
 				},
 			};
 		},
@@ -258,19 +261,6 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 				"/sign-in/oauth2",
 				{
 					method: "POST",
-					query: z
-						.object({
-							/**
-							 * Redirect to the current URL after the
-							 * user has signed in.
-							 */
-							currentURL: z
-								.string({
-									description: "Redirect to the current URL after sign in",
-								})
-								.optional(),
-						})
-						.optional(),
 					body: z.object({
 						providerId: z.string({
 							description: "The provider ID for the OAuth provider",
@@ -283,6 +273,17 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 						errorCallbackURL: z
 							.string({
 								description: "The URL to redirect to if an error occurs",
+							})
+							.optional(),
+						newUserCallbackURL: z
+							.string({
+								description:
+									"The URL to redirect to after login if the user is new",
+							})
+							.optional(),
+						disableRedirect: z
+							.boolean({
+								description: "Disable redirect",
 							})
 							.optional(),
 					}),
@@ -334,6 +335,7 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 						pkce,
 						prompt,
 						accessType,
+						authorizationUrlParams,
 					} = config;
 					let finalAuthUrl = authorizationUrl;
 					let finalTokenUrl = tokenUrl;
@@ -358,6 +360,16 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 							message: ERROR_CODES.INVALID_OAUTH_CONFIGURATION,
 						});
 					}
+					if (authorizationUrlParams) {
+						const withAdditionalParams = new URL(finalAuthUrl);
+						for (const [paramName, paramValue] of Object.entries(
+							authorizationUrlParams,
+						)) {
+							withAdditionalParams.searchParams.set(paramName, paramValue);
+						}
+						finalAuthUrl = withAdditionalParams.toString();
+					}
+
 					const { state, codeVerifier } = await generateState(ctx);
 					const authUrl = await createAuthorizationURL({
 						id: providerId,
@@ -387,7 +399,7 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 
 					return ctx.json({
 						url: authUrl.toString(),
-						redirect: true,
+						redirect: !ctx.body.disableRedirect,
 					});
 				},
 			),
@@ -406,9 +418,11 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 								description: "The error message, if any",
 							})
 							.optional(),
-						state: z.string({
-							description: "The state parameter from the OAuth2 request",
-						}),
+						state: z
+							.string({
+								description: "The state parameter from the OAuth2 request",
+							})
+							.optional(),
 					}),
 					metadata: {
 						openapi: {
@@ -436,7 +450,7 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 				async (ctx) => {
 					if (ctx.query.error || !ctx.query.code) {
 						throw ctx.redirect(
-							`${ctx.context.baseURL}?error=${
+							`${ctx.context.options.baseURL}?error=${
 								ctx.query.error || "oAuth_code_missing"
 							}`,
 						);
@@ -453,7 +467,8 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 					let tokens: OAuth2Tokens | undefined = undefined;
 					const parsedState = await parseState(ctx);
 
-					const { callbackURL, codeVerifier, errorURL } = parsedState;
+					const { callbackURL, codeVerifier, errorURL, newUserURL } =
+						parsedState;
 					const code = ctx.query.code;
 
 					let finalTokenUrl = provider.tokenUrl;
@@ -478,11 +493,12 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 						}
 						tokens = await validateAuthorizationCode({
 							code,
-							codeVerifier,
+							codeVerifier: provider.pkce ? codeVerifier : undefined,
 							redirectURI: `${ctx.context.baseURL}/oauth2/callback/${provider.providerId}`,
 							options: {
 								clientId: provider.clientId,
 								clientSecret: provider.clientSecret,
+								redirectURI: provider.redirectURI,
 							},
 							tokenEndpoint: finalTokenUrl,
 						});
@@ -532,6 +548,7 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 							scope: tokens.scopes?.join(","),
 						},
 					});
+
 					function redirectOnError(error: string) {
 						throw ctx.redirect(
 							`${
@@ -549,10 +566,14 @@ export const genericOAuth = (options: GenericOAuthOptions) => {
 					});
 					let toRedirectTo: string;
 					try {
-						const url = new URL(callbackURL);
+						const url = result.isRegister
+							? newUserURL || callbackURL
+							: callbackURL;
 						toRedirectTo = url.toString();
 					} catch {
-						toRedirectTo = callbackURL;
+						toRedirectTo = result.isRegister
+							? newUserURL || callbackURL
+							: callbackURL;
 					}
 					throw ctx.redirect(toRedirectTo);
 				},

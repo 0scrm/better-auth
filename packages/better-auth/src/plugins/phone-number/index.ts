@@ -3,15 +3,16 @@ import { createAuthEndpoint } from "../../api/call";
 import type {
 	BetterAuthPlugin,
 	InferOptionSchema,
-	PluginSchema,
+	AuthPluginSchema,
 } from "../../types/plugins";
 import { APIError } from "better-call";
-import { mergeSchema, type User } from "../../db/schema";
+import { mergeSchema } from "../../db/schema";
 import { generateRandomString } from "../../crypto/random";
 import { getSessionFromCtx } from "../../api";
 import { getDate } from "../../utils/date";
 import { setSessionCookie } from "../../cookies";
 import { BASE_ERROR_CODES } from "../../error/codes";
+import type { User } from "../../types";
 
 export interface UserWithPhoneNumber extends User {
 	phoneNumber: string;
@@ -22,7 +23,7 @@ function generateOTP(size: number) {
 	return generateRandomString(size, "0-9");
 }
 
-export const phoneNumber = (options?: {
+export interface PhoneNumberOptions {
 	/**
 	 * Length of the OTP code
 	 * @default 6
@@ -92,7 +93,9 @@ export const phoneNumber = (options?: {
 	 * Custom schema for the admin plugin
 	 */
 	schema?: InferOptionSchema<typeof schema>;
-}) => {
+}
+
+export const phoneNumber = (options?: PhoneNumberOptions) => {
 	const opts = {
 		expiresIn: options?.expiresIn || 300,
 		otpLength: options?.otpLength || 6,
@@ -238,8 +241,18 @@ export const phoneNumber = (options?: {
 						ctx.body.rememberMe === false,
 					);
 					return ctx.json({
-						user: user,
-						session,
+						token: session.token,
+						user: {
+							id: user.id,
+							email: user.email,
+							emailVerified: user.emailVerified,
+							name: user.name,
+							image: user.image,
+							phoneNumber: user.phoneNumber,
+							phoneNumberVerified: user.phoneNumberVerified,
+							createdAt: user.createdAt,
+							updatedAt: user.updatedAt,
+						} as UserWithPhoneNumber,
 					});
 				},
 			),
@@ -417,7 +430,7 @@ export const phoneNumber = (options?: {
 								message: BASE_ERROR_CODES.USER_NOT_FOUND,
 							});
 						}
-						const user = await ctx.context.internalAdapter.updateUser(
+						let user = await ctx.context.internalAdapter.updateUser(
 							session.user.id,
 							{
 								[opts.phoneNumber]: ctx.body.phoneNumber,
@@ -425,8 +438,19 @@ export const phoneNumber = (options?: {
 							},
 						);
 						return ctx.json({
-							user: user as UserWithPhoneNumber,
-							session: session.session,
+							status: true,
+							token: session.session.token,
+							user: {
+								id: user.id,
+								email: user.email,
+								emailVerified: user.emailVerified,
+								name: user.name,
+								image: user.image,
+								phoneNumber: user.phoneNumber,
+								phoneNumberVerified: user.phoneNumberVerified,
+								createdAt: user.createdAt,
+								updatedAt: user.updatedAt,
+							} as UserWithPhoneNumber,
 						});
 					}
 
@@ -495,14 +519,36 @@ export const phoneNumber = (options?: {
 							user,
 						});
 						return ctx.json({
-							user,
-							session,
+							status: true,
+							token: session.token,
+							user: {
+								id: user.id,
+								email: user.email,
+								emailVerified: user.emailVerified,
+								name: user.name,
+								image: user.image,
+								phoneNumber: user.phoneNumber,
+								phoneNumberVerified: user.phoneNumberVerified,
+								createdAt: user.createdAt,
+								updatedAt: user.updatedAt,
+							} as UserWithPhoneNumber,
 						});
 					}
 
 					return ctx.json({
-						user,
-						session: null,
+						status: true,
+						token: null,
+						user: {
+							id: user.id,
+							email: user.email,
+							emailVerified: user.emailVerified,
+							name: user.name,
+							image: user.image,
+							phoneNumber: user.phoneNumber,
+							phoneNumberVerified: user.phoneNumberVerified,
+							createdAt: user.createdAt,
+							updatedAt: user.updatedAt,
+						} as UserWithPhoneNumber,
 					});
 				},
 			),
@@ -519,6 +565,7 @@ const schema = {
 				type: "string",
 				required: false,
 				unique: true,
+				sortable: true,
 				returned: true,
 			},
 			phoneNumberVerified: {
@@ -529,4 +576,4 @@ const schema = {
 			},
 		},
 	},
-} satisfies PluginSchema;
+} satisfies AuthPluginSchema;

@@ -1,18 +1,16 @@
-import type { AuthContext, BetterAuthOptions } from "../types";
-import type { Adapter, Where } from "../types/adapter";
 import { getDate } from "../utils/date";
+import { parseSessionOutput, parseUserOutput } from "./schema";
 import {
-	parseSessionOutput,
-	parseUserOutput,
 	type Account,
 	type Session,
 	type User,
 	type Verification,
-} from "./schema";
+} from "../types";
 import { getWithHooks } from "./with-hooks";
 import { getIp } from "../utils/get-request-ip";
 import { safeJSONParse } from "../utils/json";
 import { generateId } from "../utils";
+import type { Adapter, AuthContext, BetterAuthOptions, Where } from "../types";
 
 export const createInternalAdapter = (
 	adapter: Adapter,
@@ -27,29 +25,6 @@ export const createInternalAdapter = (
 	const sessionExpiration = options.session?.expiresIn || 60 * 60 * 24 * 7; // 7 days
 	const { createWithHooks, updateWithHooks, updateManyWithHooks } =
 		getWithHooks(adapter, ctx);
-
-	const setSecondaryStorage = async (data: {
-		token: string;
-		user: User;
-		session: Session;
-	}) => {
-		await secondaryStorage?.set(
-			data.token,
-			JSON.stringify({
-				session: data.session,
-				user: data.user,
-			}),
-			data.session.expiresAt
-				? Math.floor(
-						((data.session.expiresAt instanceof Date
-							? data.session.expiresAt.getTime()
-							: new Date(data.session.expiresAt).getTime()) -
-							Date.now()) /
-							1000,
-					)
-				: sessionExpiration,
-		);
-	};
 
 	return {
 		createOAuthUser: async (
@@ -227,19 +202,7 @@ export const createInternalAdapter = (
 				"session",
 				secondaryStorage
 					? {
-							fn: async () => {
-								const user = await adapter.findOne<User>({
-									model: "user",
-									where: [{ field: "id", value: userId }],
-								});
-								secondaryStorage.set(
-									data.token,
-									JSON.stringify({
-										session: data,
-										user,
-									}),
-									sessionExpiration,
-								);
+							fn: async (sessionData) => {
 								/**
 								 * store the session token for the user
 								 * so we can retrieve it later for listing sessions
@@ -267,7 +230,7 @@ export const createInternalAdapter = (
 									sessionExpiration,
 								);
 
-								return data;
+								return sessionData;
 							},
 							executeMainFn: options.session?.storeSessionInDatabase,
 						}
@@ -278,29 +241,31 @@ export const createInternalAdapter = (
 		findSession: async (
 			token: string,
 		): Promise<{
-			session: Session;
-			user: User;
+			session: Session & Record<string, any>;
+			user: User & Record<string, any>;
 		} | null> => {
 			if (secondaryStorage) {
 				const sessionStringified = await secondaryStorage.get(token);
-				if (sessionStringified) {
-					const s = JSON.parse(sessionStringified);
-					const parsedSession = parseSessionOutput(ctx.options, {
-						...s.session,
-						expiresAt: new Date(s.session.expiresAt),
-						createdAt: new Date(s.session.createdAt),
-						updatedAt: new Date(s.session.updatedAt),
-					});
-					const parsedUser = parseUserOutput(ctx.options, {
-						...s.user,
-						createdAt: new Date(s.user.createdAt),
-						updatedAt: new Date(s.user.updatedAt),
-					});
-					return {
-						session: parsedSession,
-						user: parsedUser,
-					};
+				if (!sessionStringified) {
+					return null;
 				}
+
+				const s = JSON.parse(sessionStringified);
+				const parsedSession = parseSessionOutput(ctx.options, {
+					...s.session,
+					expiresAt: new Date(s.session.expiresAt),
+					createdAt: new Date(s.session.createdAt),
+					updatedAt: new Date(s.session.updatedAt),
+				});
+				const parsedUser = parseUserOutput(ctx.options, {
+					...s.user,
+					createdAt: new Date(s.user.createdAt),
+					updatedAt: new Date(s.user.updatedAt),
+				});
+				return {
+					session: parsedSession,
+					user: parsedUser,
+				};
 			}
 
 			const session = await adapter.findOne<Session>({
@@ -331,17 +296,6 @@ export const createInternalAdapter = (
 			}
 			const parsedSession = parseSessionOutput(ctx.options, session);
 			const parsedUser = parseUserOutput(ctx.options, user);
-
-			if (secondaryStorage) {
-				/**
-				 * Persists session data to secondary storage as it seems it has been evicted from it.
-				 */
-				await setSecondaryStorage({
-					token,
-					user: parsedUser,
-					session: parsedSession,
-				});
-			}
 
 			return {
 				session: parsedSession,
@@ -436,11 +390,6 @@ export const createInternalAdapter = (
 										...parsedSession.session,
 										...data,
 									};
-									await setSecondaryStorage({
-										token: sessionToken,
-										user: parsedSession.user,
-										session: updatedSession,
-									});
 									return updatedSession;
 								} else {
 									return null;
@@ -455,18 +404,13 @@ export const createInternalAdapter = (
 		deleteSession: async (token: string) => {
 			if (secondaryStorage) {
 				await secondaryStorage.delete(token);
-				if (options.session?.storeSessionInDatabase) {
-					await adapter.delete<Session>({
-						model: "session",
-						where: [
-							{
-								field: "token",
-								value: token,
-							},
-						],
-					});
+
+				if (
+					!options.session?.storeSessionInDatabase ||
+					ctx.options.session?.preserveSessionInDatabase
+				) {
+					return;
 				}
-				return;
 			}
 			await adapter.delete<Session>({
 				model: "session",
@@ -482,6 +426,21 @@ export const createInternalAdapter = (
 			await adapter.deleteMany({
 				model: "account",
 				where: [
+					{
+						field: "userId",
+						value: userId,
+					},
+				],
+			});
+		},
+		deleteAccount: async (providerId: string, userId: string) => {
+			await adapter.delete({
+				model: "account",
+				where: [
+					{
+						field: "providerId",
+						value: providerId,
+					},
 					{
 						field: "userId",
 						value: userId,
@@ -510,23 +469,13 @@ export const createInternalAdapter = (
 						}
 					}
 				}
-				if (options.session?.storeSessionInDatabase) {
-					await adapter.deleteMany({
-						model: "session",
-						where: [
-							{
-								field: Array.isArray(userIdOrSessionTokens)
-									? "token"
-									: "userId",
-								value: userIdOrSessionTokens,
-								operator: Array.isArray(userIdOrSessionTokens)
-									? "in"
-									: undefined,
-							},
-						],
-					});
+
+				if (
+					!options.session?.storeSessionInDatabase ||
+					ctx.options.session?.preserveSessionInDatabase
+				) {
+					return;
 				}
-				return;
 			}
 			await adapter.deleteMany({
 				model: "session",
@@ -538,6 +487,71 @@ export const createInternalAdapter = (
 					},
 				],
 			});
+		},
+		findOAuthUser: async (
+			email: string,
+			accountId: string,
+			providerId: string,
+		) => {
+			const account = await adapter.findOne<Account>({
+				model: "account",
+				where: [
+					{
+						value: accountId,
+						field: "accountId",
+					},
+					{
+						value: providerId,
+						field: "providerId",
+					},
+				],
+			});
+			if (account) {
+				const user = await adapter.findOne<User>({
+					model: "user",
+					where: [
+						{
+							value: account.userId,
+							field: "id",
+						},
+					],
+				});
+				if (user) {
+					return {
+						user,
+						accounts: [account],
+					};
+				} else {
+					return null;
+				}
+			} else {
+				const user = await adapter.findOne<User>({
+					model: "user",
+					where: [
+						{
+							value: email.toLowerCase(),
+							field: "email",
+						},
+					],
+				});
+				if (user) {
+					const accounts = await adapter.findMany<Account>({
+						model: "account",
+						where: [
+							{
+								value: user.id,
+								field: "userId",
+							},
+						],
+					});
+					return {
+						user,
+						accounts: accounts || [],
+					};
+				} else {
+					return null;
+				}
+			}
 		},
 		findUserByEmail: async (
 			email: string,
